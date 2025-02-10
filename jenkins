@@ -1,0 +1,115 @@
+ Install & Configure eksctl
+
+curl --silent --location "https://github.com/weaveworks/eksctl/releases/latest/download/eksctl_$(uname -s)_amd64.tar.gz" | tar xz -C /tmp
+sudo mv /tmp/eksctl /usr/local/bin
+
+
+Install Terraform
+
+sudo apt update && sudo apt install -y terraform
+terraform -v  # Verify installation
+
+
+Automate Terraform Execution
+Add this to Jenkins Pipeline (instead of running manually):
+
+
+stage('Terraform Apply') {
+    steps {
+        sh '''
+        terraform init
+        terraform plan -out=tfplan
+        terraform apply -auto-approve tfplan
+        '''
+
+Multi-Stage Docker Build
+Instead of a large image, optimize:
+
+
+# Build Stage
+FROM maven:3.8.5-openjdk-17 AS build
+WORKDIR /app
+COPY . .
+RUN mvn clean package -DskipTests
+
+# Run Stage
+FROM openjdk:17-jdk-slim
+COPY --from=build /app/target/*.jar app.jar
+CMD ["java", "-jar", "app.jar"]
+
+
+
+
+#!/bin/bash
+
+# Update and install dependencies
+sudo apt update -y && sudo apt upgrade -y
+sudo apt install -y openjdk-17-jdk wget unzip git curl docker.io
+
+# Add Jenkins repository and key
+wget -q -O - https://pkg.jenkins.io/debian/jenkins.io.key | sudo tee /usr/share/keyrings/jenkins-keyring.asc > /dev/null
+echo "deb [signed-by=/usr/share/keyrings/jenkins-keyring.asc] https://pkg.jenkins.io/debian binary/" | sudo tee /etc/apt/sources.list.d/jenkins.list > /dev/null
+
+# Install Jenkins
+sudo apt update -y
+sudo apt install -y jenkins
+
+# Enable and start Jenkins service
+sudo systemctl enable jenkins
+sudo systemctl start jenkins
+
+# Install required plugins
+sudo su - jenkins -s /bin/bash -c "
+cat <<EOF > /var/lib/jenkins/plugins.txt
+git
+workflow-aggregator
+pipeline-stage-view
+github
+docker-workflow
+kubernetes
+terraform
+trivy
+sonar
+EOF
+
+# Install plugins using Jenkins CLI
+mkdir -p /var/lib/jenkins/plugins
+wget http://localhost:8080/jnlpJars/jenkins-cli.jar -O /var/lib/jenkins/jenkins-cli.jar
+while ! curl -s http://localhost:8080/login > /dev/null; do sleep 5; done
+java -jar /var/lib/jenkins/jenkins-cli.jar -s http://localhost:8080 install-plugin $(cat /var/lib/jenkins/plugins.txt | tr '\n' ' ')
+"
+
+# Restart Jenkins to apply plugins
+sudo systemctl restart jenkins
+
+# Install Terraform
+wget -q https://releases.hashicorp.com/terraform/1.6.0/terraform_1.6.0_linux_amd64.zip
+unzip terraform_1.6.0_linux_amd64.zip
+sudo mv terraform /usr/local/bin/
+rm terraform_1.6.0_linux_amd64.zip
+
+# Install kubectl
+curl -LO "https://dl.k8s.io/release/$(curl -s https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl"
+sudo install -o root -g root -m 0755 kubectl /usr/local/bin/kubectl
+rm kubectl
+
+# Install Trivy
+curl -sfL https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/install.sh | sudo sh
+sudo mv trivy /usr/local/bin/
+
+# Install SonarQube Scanner
+wget -q -O sonar-scanner.zip "https://binaries.sonarsource.com/Distribution/sonar-scanner-cli/sonar-scanner-cli-4.7.0.2747-linux.zip"
+unzip sonar-scanner.zip
+sudo mv sonar-scanner-4.7.0.2747-linux /opt/sonar-scanner
+rm sonar-scanner.zip
+echo 'export PATH=$PATH:/opt/sonar-scanner/bin' | sudo tee -a /etc/profile
+
+# Add Jenkins to Docker group (for running builds inside Docker)
+sudo usermod -aG docker jenkins
+sudo systemctl restart jenkins
+
+# Display initial Jenkins admin password
+echo "Jenkins installed successfully. Get your initial admin password:"
+sudo cat /var/lib/jenkins/secrets/initialAdminPassword
+
+
